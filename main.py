@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
 
-TELEGRAM_TOKEN = '8074453340:AAGp4Z43UiwTYfVON6P4lCyMGKj3Z52AZc0'
+#теперь тут храним
 DATA_FILE = 'user_data.json'
 
 class TimeTrackerBot:
@@ -15,7 +15,6 @@ class TimeTrackerBot:
     def __init__(self):
         self.load_data()
 
-        # Logging
         logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s', level=logging.INFO)
         self.logger = logging.getLogger(__name__)
 
@@ -42,12 +41,10 @@ class TimeTrackerBot:
             }, f)
 
     def setup_handlers(self):
-        # Commands
         self.application.add_handler(CommandHandler("start", self.start))
         self.application.add_handler(CommandHandler("end", self.end))
         self.application.add_handler(CommandHandler("statistics", self.statistics))
 
-        # Text messages
         self.application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_task))
         self.application.add_handler(CallbackQueryHandler(self.handle_statistics_period, pattern='^1|2|3'))
         self.application.add_handler(
@@ -78,19 +75,17 @@ class TimeTrackerBot:
         await update.message.reply_text(f'Запускаю таймер для: "{task}". Нажмите /end, чтобы остановить таймер')
         self.user_timers[user_id] = {'task': task, 'start_time': time.time(), 'paused_time': 0, 'is_paused': False}
 
-        # Initialize statistics if not present
         if user_id not in self.user_statistics:
             self.user_statistics[user_id] = {}
 
-        # Reminder task
         asyncio.create_task(self.remind_to_rest(user_id, context))
 
-        # Save data to file
+         #вот тут теперь сохраняем
         self.save_data()
 
     async def remind_to_rest(self, user_id, context):
         while user_id in self.user_timers:
-            await asyncio.sleep(20)  # Wait for 30 minutes
+            await asyncio.sleep(600)
             if user_id in self.user_timers and not self.user_timers[user_id]['is_paused']:
                 keyboard = [
                     [InlineKeyboardButton("Да", callback_data='yes')],
@@ -180,7 +175,7 @@ class TimeTrackerBot:
             f'Таймер для "{task}" остановлен. Вы потратили {self.format_time(elapsed_time)}'
         )
 
-        # Remove timer and save data
+        # и вот тут
         del self.user_timers[user_id]
         self.save_data()
 
@@ -283,7 +278,6 @@ class TimeTrackerBot:
             await self.handle_continue(update, context)
 
     def run(self):
-        # Запуск бота
         self.application.run_polling()
 
 
