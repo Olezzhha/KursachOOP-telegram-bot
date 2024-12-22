@@ -1,39 +1,59 @@
 
-
 import logging
 import time
 import asyncio
+import json
 from datetime import datetime, timedelta
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
 
+TELEGRAM_TOKEN = '8074453340:AAGp4Z43UiwTYfVON6P4lCyMGKj3Z52AZc0'
+DATA_FILE = 'user_data.json'
 
 class TimeTrackerBot:
 
     def __init__(self):
-        self.user_timers = {}
-        self.user_statistics = {}
+        self.load_data()
 
-        # логирование
+        # Logging
         logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s', level=logging.INFO)
         self.logger = logging.getLogger(__name__)
 
         self.application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
         self.setup_handlers()
 
+    def load_data(self):
+        """Load user timers and statistics from a JSON file."""
+        try:
+            with open(DATA_FILE, 'r') as f:
+                data = json.load(f)
+                self.user_timers = data.get('user_timers', {})
+                self.user_statistics = data.get('user_statistics', {})
+        except FileNotFoundError:
+            self.user_timers = {}
+            self.user_statistics = {}
+
+    def save_data(self):
+        """Save user timers and statistics to a JSON file."""
+        with open(DATA_FILE, 'w') as f:
+            json.dump({
+                'user_timers': self.user_timers,
+                'user_statistics': self.user_statistics
+            }, f)
+
     def setup_handlers(self):
-        # команды
+        # Commands
         self.application.add_handler(CommandHandler("start", self.start))
         self.application.add_handler(CommandHandler("end", self.end))
         self.application.add_handler(CommandHandler("statistics", self.statistics))
 
-        # текстовые сообщения
+        # Text messages
         self.application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_task))
         self.application.add_handler(CallbackQueryHandler(self.handle_statistics_period, pattern='^1|2|3'))
-        self.application.add_handler(CallbackQueryHandler(self.handle_next_action, pattern='^(new_timer|view_statistics|continue)'))
+        self.application.add_handler(
+            CallbackQueryHandler(self.handle_next_action, pattern='^(new_timer|view_statistics|continue)'))
         self.application.add_handler(CallbackQueryHandler(self.handle_rest_response, pattern='^(yes|no)'))
 
-    # запуск
     async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         welcome_message = (
             "Привет! Я ваш помощник для отслеживания времени.\n"
@@ -47,9 +67,8 @@ class TimeTrackerBot:
         )
         await update.message.reply_text(welcome_message)
 
-        # вывод инфы что таймер запущен
     async def handle_task(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        user_id = update.effective_chat.id
+        user_id = str(update.effective_chat.id)
         task = update.message.text
 
         if user_id in self.user_timers:
@@ -59,17 +78,19 @@ class TimeTrackerBot:
         await update.message.reply_text(f'Запускаю таймер для: "{task}". Нажмите /end, чтобы остановить таймер')
         self.user_timers[user_id] = {'task': task, 'start_time': time.time(), 'paused_time': 0, 'is_paused': False}
 
-        # Инициализация статистики, если ее нет
+        # Initialize statistics if not present
         if user_id not in self.user_statistics:
             self.user_statistics[user_id] = {}
 
-        # Штука напоминаний об отдыхе
+        # Reminder task
         asyncio.create_task(self.remind_to_rest(user_id, context))
 
-    # напоминалка что надо отдохнуть
+        # Save data to file
+        self.save_data()
+
     async def remind_to_rest(self, user_id, context):
         while user_id in self.user_timers:
-            await asyncio.sleep(30)  # Ждем 30 минут
+            await asyncio.sleep(20)  # Wait for 30 minutes
             if user_id in self.user_timers and not self.user_timers[user_id]['is_paused']:
                 keyboard = [
                     [InlineKeyboardButton("Да", callback_data='yes')],
@@ -83,11 +104,10 @@ class TimeTrackerBot:
                     reply_markup=reply_markup
                 )
 
-    # хэндл для напоминания об отдыхе
     async def handle_rest_response(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         query = update.callback_query
         await query.answer()
-        user_id = query.from_user.id
+        user_id = str(query.from_user.id)
 
         if user_id not in self.user_timers:
             await query.message.reply_text("У вас нет активного таймера")
@@ -124,11 +144,10 @@ class TimeTrackerBot:
             text="Нажмите или напишите /end, чтобы остановить таймер"
         )
 
-        # ф-ия, чтобы продолжить работу после остановки во время отдыха
     async def handle_continue(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         query = update.callback_query
         await query.answer()
-        user_id = query.from_user.id
+        user_id = str(query.from_user.id)
 
         if user_id in self.user_timers and self.user_timers[user_id]['is_paused']:
             paused_duration = time.time() - self.user_timers[user_id]['paused_time']
@@ -144,12 +163,12 @@ class TimeTrackerBot:
             text="Нажмите /end, чтобы остановить подсчет времени"
         )
 
-        # конец счетчика времени
     async def end(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        user_id = update.effective_chat.id
+        user_id = str(update.effective_chat.id)
 
         if user_id not in self.user_timers:
-            await update.message.reply_text('У вас нет активного таймера. Просто напишите название дела и таймер запустится!')
+            await update.message.reply_text(
+                'У вас нет активного таймера. Просто напишите название дела и таймер запустится!')
             return
 
         elapsed_time = self.calculate_elapsed_time(user_id)
@@ -160,16 +179,18 @@ class TimeTrackerBot:
         await update.message.reply_text(
             f'Таймер для "{task}" остановлен. Вы потратили {self.format_time(elapsed_time)}'
         )
-         #обновить таймер
+
+        # Remove timer and save data
         del self.user_timers[user_id]
+        self.save_data()
 
         keyboard = [
             [InlineKeyboardButton("Начать новую задачу", callback_data='new_timer')]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
-        await update.message.reply_text("Что вы хотите сделать дальше? \n\n/statistics - Показать статистику\n", reply_markup=reply_markup)
+        await update.message.reply_text("Что вы хотите сделать дальше? \n\n/statistics - Показать статистику\n",
+                                        reply_markup=reply_markup)
 
-     #считаем паузу, чтобы она не шла в суммарное время
     def calculate_elapsed_time(self, user_id):
         return (self.user_timers[user_id]['paused_time'] - self.user_timers[user_id]['start_time']
                 if self.user_timers[user_id]['is_paused']
@@ -180,19 +201,18 @@ class TimeTrackerBot:
             self.user_statistics[user_id][task] = []
         self.user_statistics[user_id][task].append((time.time(), elapsed_time))
 
-      #изначально тоже из статистика, но так без повторения кода
     def format_time(self, elapsed_time):
         hours, remainder = divmod(int(elapsed_time), 3600)
         minutes, seconds = divmod(remainder, 60)
         seconds = round(seconds, 1)
         return f"{hours} часов, {minutes} минут и {seconds} секунд"
 
-    # стата по времени
     async def statistics(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        user_id = update.effective_chat.id
+        user_id = str(update.effective_chat.id)
 
         if user_id not in self.user_statistics or not self.user_statistics[user_id]:
-            await update.message.reply_text('У вас нет статистики. Начните работу и я покажу сколько времени вы потратили')
+            await update.message.reply_text(
+                'У вас нет статистики. Начните работу и я покажу сколько времени вы потратили')
             return
 
         keyboard = [
@@ -204,11 +224,10 @@ class TimeTrackerBot:
 
         await update.message.reply_text("Выберите период для просмотра статистики:", reply_markup=reply_markup)
 
-    # хэндл для статы
     async def handle_statistics_period(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         query = update.callback_query
         await query.answer()
-        user_id = query.from_user.id
+        user_id = str(query.from_user.id)
         period = query.data
         time_limit = self.get_time_limit(period)
 
@@ -216,7 +235,8 @@ class TimeTrackerBot:
         total_time = 0
 
         for task, records in self.user_statistics[user_id].items():
-            task_time = sum(elapsed for timestamp, elapsed in records if datetime.fromtimestamp(timestamp) >= time_limit)
+            task_time = sum(
+                elapsed for timestamp, elapsed in records if datetime.fromtimestamp(timestamp) >= time_limit)
             if task_time > 0:
                 total_time += task_time
                 task_dates_str = self.get_task_dates(records, time_limit)
@@ -227,8 +247,6 @@ class TimeTrackerBot:
 
         await self.ask_next_action(query.message)
 
-
-     #Добавила: время, чтобы в нули начинался новый день
     def get_time_limit(self, period):
         if period == '1':
             return datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
@@ -239,10 +257,9 @@ class TimeTrackerBot:
             return datetime.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
 
     def get_task_dates(self, records, time_limit):
-        return ', '.join(datetime.fromtimestamp(timestamp).strftime('%Y-%m-%d %H:%M:%S') for timestamp, _ in records if datetime.fromtimestamp(timestamp) >= time_limit)
+        return ', '.join(datetime.fromtimestamp(timestamp).strftime('%Y-%m-%d %H:%M:%S') for timestamp, _ in records if
+                         datetime.fromtimestamp(timestamp) >= time_limit)
 
-
-       #запрос следующего действия
     async def ask_next_action(self, message):
         keyboard = [[InlineKeyboardButton("Запустить новый таймер", callback_data='new_timer')]]
         reply_markup = InlineKeyboardMarkup(keyboard)
@@ -250,11 +267,10 @@ class TimeTrackerBot:
             "Вы хотите работать дальше или еще раз показать статистику? \n\n/statistics - Показать статистику\n",
             reply_markup=reply_markup)
 
-       # хэндл следующего запроса
     async def handle_next_action(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         query = update.callback_query
         await query.answer()
-        user_id = query.from_user.id
+        user_id = str(query.from_user.id)
 
         if query.data == 'new_timer':
             await query.message.reply_text("Пожалуйста, введите дело, для которого вы хотите запустить таймер.")
